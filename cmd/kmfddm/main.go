@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -37,7 +38,8 @@ func main() {
 		flDSN     = flag.String("storage-dsn", "", "storage data source name")
 		flOptions = flag.String("storage-options", "", "storage backend options")
 
-		flDumpStatus = flag.String("dump-status", "", "file name to dump status reports to (\"-\" for stdout)")
+		flDumpStatus    = flag.String("dump-status", "", "file name to dump status reports to (\"-\" for stdout)")
+		flStatusWebhook = flag.String("status-webhook-url", "", "URL to send status reports")
 
 		flEnqueueURL = flag.String("enqueue", "", "URL of MDM server enqueue endpoint")
 		flEnqueueKey = flag.String("enqueue-key", "", "MDM server enqueue API key")
@@ -116,6 +118,9 @@ func main() {
 			logger.Debug(logkeys.Message, "dump status", "path", *flDumpStatus)
 		}
 		statusHandler = DumpHandler(statusHandler, f)
+	}
+	if *flStatusWebhook != "" {
+		statusHandler = WebhookHandler(statusHandler, *flStatusWebhook)
 	}
 	mux.Handle("/status", statusHandler, "PUT")
 
@@ -277,6 +282,21 @@ func DumpHandler(next http.Handler, output io.Writer) http.HandlerFunc {
 		respBytes, _ := httpddm.ReadAllAndReplaceBody(r)
 		output.Write(respBytes)
 		output.Write([]byte{'\n'})
+		next.ServeHTTP(w, r)
+	}
+}
+
+func WebhookHandler(next http.Handler, url string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		respBytes, _ := httpddm.ReadAllAndReplaceBody(r)
+		request, err := http.NewRequest("POST", url, bytes.NewReader(respBytes))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Enrollment-ID", r.Header.Get("X-Enrollment-ID"))
+		if err == nil {
+			client := &http.Client{}
+			client.Do(request)
+		}
+
 		next.ServeHTTP(w, r)
 	}
 }
